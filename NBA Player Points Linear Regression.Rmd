@@ -1,0 +1,92 @@
+---
+title: "DS3100 PS5"
+author: "William Theodore"
+date: "2024-04-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Motivation and Data
+
+This dataset was obtained from the Kaggle database (https://www.kaggle.com/datasets/csanhueza/the-marvel-universe-social-network). It provides insight into the relationships between Marvel superheros and the comics they are in. The dataset includes 96,104 edges and 19,091 nodes. The edges are the superhero's name and the nodes are the comic that they are in.
+
+## Research Question
+
+Which superheroes are the most central within the Marvel Comic Universe?
+
+## Variables of Interest
+
+The nodes of the dataset are all of Marvel's superheroes and all of Marvel's comics. The edges of the dataset are the appearances of superheroes in comics. All of the variables of interest are measured as strings. 
+
+- Hero (string) - The name of a Marvel superhero.
+- Comic (string) - The name of a Marvel comic.
+
+```{r}
+library(igraph)
+library(ggraph)
+
+edges <- read.csv('edges.csv') # Reads in edges portion of dataset
+nodes <- read.csv('nodes.csv') # Loads in nodes portion of dataset
+
+unique_edges <- unique(c(edges$hero, edges$comic)) # Checks for unique edges
+unique_nodes <- unique(nodes$node) # Checks for unique nodes
+setdiff(unique_edges, unique_nodes) # Checks for discrepancies between edges and nodes
+
+new_node <- data.frame(node = "SPIDER-MAN/PETER PARKER", type = "hero") # Adds the discrepancy to the a new dataframe
+nodes <- rbind(nodes, new_node) # Binds new and existing dataframe
+```
+
+```{r}
+# Checks first 5 rows of both edges and nodes
+head(edges) 
+head(nodes)
+```
+
+```{r}
+network <- graph_from_data_frame(edges, directed = TRUE ,vertices = nodes) # Creates a direct, unweighted, single network
+```
+
+I chose to create a directed, unweighted, and single network between the supheroes and comics in the Marvel Universe. The network is directed because a connection means a superhero was a character in the comic. The network is unweighted because there is no numerical attribute that describes each character or comic. The network is single because we are only interested in the presence and absence of appearances in comics (binary relationship).
+
+# Description
+
+```{r}
+igraph::edge_density(network) # Calculates the density of the network
+
+degree <- igraph::degree(network) # Calculates degree measure
+hist(igraph::degree(network)) |> # Creates a histogram of degrees
+  labs(title = "Number of Adjacent Edges for Each Node") # Titles the histogram
+
+
+betweenness <- igraph::betweenness(network)
+closeness <- igraph::closeness(network)
+```
+
+```{r}
+nodes_to_remove <- which(degree(network) < 25)
+network <- delete_vertices(network, nodes_to_remove)
+
+ggraph(network, layout = "kk") +
+  geom_edge_link(color = "black", alpha = .5) + 
+  geom_node_point(color = "blue") +
+  labs(title = "Marvel Universe Social Network")
+```
+
+```{r}
+top_indices <- head(order(degree, decreasing = TRUE), 5) # Sorts the degrees in descending order and get the indices of the top 5 superheroes
+top_heroes <- V(network)$name[top_indices] # Get the names of the top 5 superheroes
+print(top_heroes) # Print the names of the top 5 superheroes
+```
+
+# Interpretation and Insight
+
+The edge density value of .0005 indicates that the network only consists of .05% of the total number of possible edges. This means that most Marvel Superheroes do not appear in the same comic. This makes sense when you think of how Marvel comics are created, which is generally tailored towards a single character/superhero. Very few comics have multiple superheroes in them and are usually ones like "The Avengers".
+
+The degree of the network is the number of adjacent edges for each node. The histogram shows that almost all of the nodes in the network have a very few number of edges. In the context of the dataset, this means that most of the superheros aren't connected with multiple Marvel comics. This makes sense because of reasoning similar to the reason above where most supheroes only appear in their own comics.
+
+The superheros with the highest degrees, or most number of edges, are Spiderman, Captain America, Iron Man, Thor, and the Thing. This makes sense because they are all very popular characters within the Marvel Universe. Furthermore, all of them appear in "superhero teams" in which separate comics are made for them. Spiderman, Captain America, Iron Man, and Thor are all in The Avengers, and the Thing is in The Fantastic Four. Therefore, we can conclude the superheroes that are most central in the Marvel Comic Universe are Spiderman, Captain America, Iron Man, Thor, and the Thing. Since I grew up watching all of the Avengers movies, I am very familiar with these characters. So, the results of the network look similar to what I expected.
+
+
