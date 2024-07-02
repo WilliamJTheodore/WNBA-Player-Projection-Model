@@ -1,0 +1,221 @@
+---
+title: "WNBA"
+author: "William Theodore"
+date: "2024-01-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readxl)
+library(dplyr)
+library(tidyverse)
+library(randomForest)
+library(caret)
+library(ggrepel)
+library(ggimage)
+library(png)
+library(grid)
+```
+
+```{r}
+defensive_stats <- read_excel('WNBA Database.xlsx', sheet = "Teams General Opponent")
+game_log_2023 <- read_excel('WNBA Database.xlsx', sheet = "Team Game Log 2023")
+player_log_2023 <- read_excel('WNBA Database.xlsx', sheet = "Player Game Log 2023")
+player_averages_2023 <- read_excel('WNBA Database.xlsx', sheet = "Player Season Averages 2023")
+
+```
+
+# Motivation
+
+## Research Question
+
+What are the best predictors of player assists in the WNBA?
+
+## Hypothesis
+
+I believe the best predictors of players assists in the WNBA are a player's average assists for the season, the average assists allowed by their opponent for the player's position, the Total O/U for a game, and the combined pace of both teams in a game.
+
+## Dataset
+
+In order to test my hypothesis, I created a large dataset by scraping both player and team game logs, box scores, and team ratings for the 2023 season from https://stats.wnba.com. I only chose player game logs for player's who played at least 15 minutes in a game.
+
+## Variables of Interest
+
+Assists Per Game
+Opponent's Assists Allowed Per Game
+Opponent's Assists Allowed Per Game by Position
+
+# Data Wrangling
+  
+```{r}
+player_log_2023 <- player_log_2023 |>
+  group_by(PLAYER) |>
+  mutate(AVG_AST = round(mean(PLAYER_AST),3),
+         AVG_PTS = round(mean(PLAYER_PTS),3),
+         AVG_MIN = round(mean(PLAYER_MIN),3),
+         PLAYER_PRA = PLAYER_PTS + PLAYER_REB + PLAYER_AST,
+         PLAYER_FS = PLAYER_PTS + (PLAYER_REB * 1.2) + (PLAYER_AST * 1.5) - PLAYER_TOV + (PLAYER_STL * 3) + (PLAYER_BLK * 3),
+         MATCHUP = substr(MATCHUP, nchar(MATCHUP) - 2, nchar(MATCHUP))) |>
+  separate(PLAYER, into = c("FIRSTNAME", "LASTNAME"), sep = " ")
+
+game_log_2023 <- game_log_2023 |>
+  mutate(MATCHUP = substr(MATCHUP, nchar(MATCHUP) - 2, nchar(MATCHUP)))
+
+combined_data <- merge(game_log_2023, player_log_2023, by = c("TEAM", "MATCHUP", "DATE"))
+print(combined_data)
+
+combined_data <- combined_data |>
+  left_join(defensive_stats, by = c("MATCHUP" = "OPPONENT"))
+
+combined_data$GROUP <- ave(combined_data$LASTNAME, combined_data$TEAM, combined_data$DATE, FUN = function(x) paste(sort(x), collapse = "_"))
+```
+
+My first step in data wrangling was to merge the three different datasets into one. I needed to match each player's performance for every game last year with the team's performance and the defensive rating with the team they were playing against.
+
+# Visualization
+
+```{r}
+combined_data |>
+  ggplot(aes(x = OPP_AVG_AST_ALLOWED, y = MATCHUP)) +
+  geom_bar(stat = 'identity') +
+  theme_minimal()
+```
+
+## Assists Per Game by Minutes Per Game
+
+```{r}
+top_10_ast <- player_averages_2023 |>
+  top_n(10, PLAYER_AVG_AST)
+team_colors <- c(
+  "ATL" = rgb(200/255, 16/255, 46/255),
+  "CHI" = rgb(65/255, 143/255, 222/255),
+  "CON" = rgb(252/255, 76/255, 2/255),
+  "DAL" = rgb(152/255, 214/255, 25/255),
+  "IND" = "purple",
+  "LAS" = rgb(255/255, 199/255, 44/255),
+  "LVA" = "black",
+  "MIN" = rgb(35/255, 9/255, 146/255),
+  "NYL" = rgb(110/255, 206/255, 178/255),
+  "PHO" = rgb(33/255, 23/255, 71/255),
+  "SEA" = rgb(44/255, 82/255, 52/255),
+  "WAS" = rgb(12/255, 35/255, 64/255)
+)
+
+p <- player_averages_2023 |>
+  ggplot(aes(x = PLAYER_AVG_MIN, y = PLAYER_AVG_AST, color = TEAM, label = PLAYER)) +
+  geom_point(alpha = .6) +
+  geom_text_repel(data = top_10_ast, nudge_x = 0.2, nudge_y = 0.2, size = 1.5) +
+  scale_color_manual(values = team_colors) +
+  labs(title = "Average Assists by Average Minutes", x = "Average Minutes Per Game", y = "Average Assists Per Game") +
+  theme_minimal()
+p
+
+```
+
+## Points Per Game by Opponent
+
+```{r}
+combined_data |>
+  filter(MATCHUP == 'CHI', LASTNAME == c('LOYD', 'VANDERSLOOT')) |>
+  mutate(AVG_PTS_MATCHUP = mean(PTS)) |>
+  ggplot(aes(x = LASTNAME, y = AVG_PTS_MATCHUP, fill = TEAM)) +
+  geom_bar(stat = 'identity') +
+  theme_minimal()
+```
+
+## Defensive Rating by Team
+
+```{r}
+defensive_stats |>
+  ggplot(aes(x = OPPONENT, y = OPP_DEF_RTG, fill = team_colors)) +
+  geom_bar(stat = "identity", color = "black", width = .7) +
+  geom_text(aes(label = OPP_DEF_RTG), vjust = -0.5, color = "black", size = 3) +
+  labs(title = "Team's Defensive Ratings", x = "", y = "Defensive Rating") +
+  theme_minimal() +
+  guides(fill = "none") + # Removing legend for fill color
+  coord_cartesian(ylim = c(95, NA))
+```
+
+
+## Correlation
+
+```{r}
+numeric_data <- combined_data[sapply(combined_data, is.numeric)]
+correlation_matrix <- cor(numeric_data)
+
+# Extract correlation values for the specific variable
+correlation_with_AST <- correlation_matrix['AST', ]
+
+y_labels <- names(correlation_with_AST)
+
+barplot(correlation_with_AST, 
+        col = ifelse(correlation_with_AST >= 0, "blue", "red"), 
+        main = "Correlation with Assists", 
+        ylab = "Correlation", 
+        ylim = c(-.1, 1), 
+        names.arg = y_labels, 
+        las = 2)
+```
+
+# Linear Regression Models
+
+```{r}
+set.seed(123)
+trainIndex <- createDataPartition(combined_data$AST, p = 0.8, list = FALSE)
+train <- data[trainIndex, ]
+test <- data[-trainIndex, ]
+
+model <- lm(AST ~ AVG_AST + AVG_AST_ALLOWED + PACE + DEFRTG, data = train)
+summary(model)
+```
+
+```{r}
+lm_AST <- lm(AST ~ AVG_AST + MIN +  WIN_LOSS + AVG_AST_ALLOWED + AST_PERC, data = combined_data)
+summary(lm_AST)
+```
+
+## Forward Selection Assists Model
+
+```{r}
+null_model <- lm(AST ~ 1, data = combined_data)
+
+# Forward selection
+best_model <- step(null_model, direction = "forward", scope = formula(~ AVG_AST + MIN + WIN_LOSS + AVG_AST_ALLOWED + AST_PERC + PACE + MATCHUP + AVG_AST_ALLOWED_G + AVG_AST_ALLOWED_C + AVG_AST_ALLOWED_F + OPP_DEF_RTG), data = combined_data)
+
+# Summary of the best model
+summary(best_model)
+```
+
+## Forward Selection Points Model
+
+```{r}
+null_model <- lm(PTS ~ 1, data = combined_data)
+
+# Forward selection
+best_model <- step(null_model, direction = "forward", scope = formula(~ AVG_MIN + AVG_AST + WIN_LOSS + AVG_AST_ALLOWED + AST_PERC + PACE + MATCHUP + AVG_AST_ALLOWED_G + AVG_AST_ALLOWED_C + AVG_AST_ALLOWED_F + OPP_DEF_RTG + AST_RATIO + AVG_PTS + TEAM_FGM + AST_PERC + EFG_PERC + TEAM_FG_PERC + TEAM_PTS + OFFRTG + TS_PERC + AST_TO_RATIO, data = combined_data))
+
+# Summary of the best model
+summary(best_model)
+```
+
+
+# Player Game Log vs. Opponent Quick Search 
+
+```{r}
+log <- subset(combined_data, LASTNAME == 'IONESCU' & MATCHUP == 'WAS', 
+              select = c('LASTNAME','TEAM', 'MATCHUP', 'DATE', 'GROUP', 'WIN_LOSS', 'PLAYER_MIN', 'PLAYER_PTS', 'PLAYER_AST', 'PLAYER_REB', 'PLAYER_PRA', 'PLAYER_FGM', 'PLAYER_FGA', 'PLAYER_FG%', 'PLAYER_3PM', 'PLAYER_3PA', 'PLAYER_3P_PERC', 'PLAYER_FTM', 'PLAYER_FTA', 'PLAYER_PF', 'TEAM_PTS', 'TEAM_FG_PERC', 'TEAM_THREEP_PERC', 'TEAM_PACE'))
+print.AsIs(log)
+```
+
+# Player Season Averages
+
+```{r}
+log <- subset(player_averages_2023, PLAYER == 'SHAKIRA AUSTIN', 
+              select = c('PLAYER', 'PLAYER_AVG_MIN', 'PLAYER_AVG_PTS', 'PLAYER_AVG_AST', 'PLAYER_AVG_REB', 'PLAYER_AVG_FGM', 'PLAYER_AVG_FGA', 'PLAYER_AVG_FG%', 'PLAYER_AVG_3PM', 'PLAYER_AVG_3PA', 'PLAYER_AVG_3P%', 'PLAYER_AVG_FTM', 'PLAYER_AVG_FTA'))
+print.AsIs(log)
+```
+  
